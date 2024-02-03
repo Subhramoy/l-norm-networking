@@ -1,0 +1,172 @@
+function [estPosition,eul_angle,imu_closestIndex_xRobot,imu_closestIndex_yRobot,imu_STASnr_rndd,distanceToGoal]=ImuGpsFusion_path1(i,Params,truePosition,trueVel,Rpos,Rvel,estPosition,count,snr_per_mcs_5GHz_indoor_channelB, AP_x,AP_y,imu_STASnr_rndd,gndFusion,accelData,gyroData,gps,imu_closestIndex_xRobot,imu_closestIndex_yRobot)
+
+%% Define a set of waypoints for path #2
+
+x2 = [-25 -22 -18 -15 -13 -10 -8 -5 -3 0 2 5 8 10];
+y2 = [11 15 21 13 0 -15 -20 -25 -24 -22 -20 -15 -10 -6];
+path_x2 = -25:0.5:10;
+path_y2 = interp1(x2,y2,path_x2,'spline');
+path_x2 = path_x2.';
+path_y2 = path_y2.';
+path = [path_x2 path_y2];
+
+% Input parameters %
+txPower = 25;               % In mW (dB)
+opBW = 2e7;                 % Operational BW in MHz
+NoisePower = (10.^(7/10)*1.3803e-23*290*opBW); %noisefigure*thermal noise*290*bw
+% Defining SNR range
+snr_range = (-35:1:45);
+sampleTime = 0.1;
+robotInitialLocation = path(1,:);
+robotGoal = path(end,:);
+
+%% IMU GPS sensor fusion based path correction
+
+if count == 1
+    [minValue_xRobot,imu_closestIndex_xRobot] = min(abs((estPosition(1))-AP_x));
+    [minValue_yRobot,imu_closestIndex_yRobot] = min(abs(estPosition(2)-AP_y));
+    imu_distance_closestAP(count,i) = sqrt(((estPosition(1)- AP_x(imu_closestIndex_xRobot))^2)+(estPosition(2)- AP_y(imu_closestIndex_yRobot))^2);
+    imu_Ploss(count,i) = propagation_loss (imu_distance_closestAP(count,i),Params);     % pathloss vs. distance + fixed shadow fading
+    imu_SNR(count,i) = txPower-imu_Ploss(count,i)-30-10*log10(NoisePower);
+    imu_STASnr_rndd(count,i) = ceil(str2num(sprintf('%.1f',imu_SNR(count,i))));
+    
+    if imu_STASnr_rndd(count,i) > 45
+        imu_STASnr_rndd(count,i) = 45;
+    end
+    
+    % MCS calculation for AX
+    locate_snr_classical = find(snr_range==imu_STASnr_rndd(count,i));
+    best_mcs_classical_temp = find(snr_per_mcs_5GHz_indoor_channelB(:,locate_snr_classical) <= 0.001);
+    
+    if isempty(best_mcs_classical_temp)
+        best_mcs_classical_temp = 1;
+    else
+        best_mcs_classical_temp = best_mcs_classical_temp(end);
+    end
+    
+    imu_best_mcs_classical(count,i) = best_mcs_classical_temp -1;
+
+    % Packet error rate with AX
+    imu_AX_per(count,i) = snr_per_mcs_5GHz_indoor_channelB(best_mcs_classical_temp,locate_snr_classical);
+
+    % .11ax MU UL frame duration calculation to be added later
+
+    if imu_AX_per(count,i) > 0.001       % Simulating packet drop due to high PER
+        accelData = accelData*rand; 
+        gyroData = gyroData*rand; 
+    end
+else
+    if imu_STASnr_rndd(count-1,i) >= 20
+        imu_distance_closestAP(count,i) = sqrt(((estPosition(1)- AP_x(imu_closestIndex_xRobot))^2)+(estPosition(2)- AP_y(imu_closestIndex_yRobot))^2);
+        imu_Ploss(count,i) = propagation_loss (imu_distance_closestAP(count,i),Params);     % pathloss vs. distance + fixed shadow fading
+        imu_SNR(count,i) = txPower-imu_Ploss(count,i)-30-10*log10(NoisePower);
+        imu_STASnr_rndd(count,i) = ceil(str2num(sprintf('%.1f',imu_SNR(count,i))));
+        if imu_STASnr_rndd(count,i) > 45
+            imu_STASnr_rndd(count,i) = 45;
+        end
+        if imu_STASnr_rndd(count,i) < -35
+            imu_STASnr_rndd(count,i) = -35;
+        end
+        
+        % MCS calculation for AX
+        locate_snr_classical = find(snr_range==imu_STASnr_rndd(count,i));
+        best_mcs_classical_temp = find(snr_per_mcs_5GHz_indoor_channelB(:,locate_snr_classical) <= 0.001);
+        
+        if isempty(best_mcs_classical_temp)
+            best_mcs_classical_temp = 1;
+        else
+            best_mcs_classical_temp = best_mcs_classical_temp(end);
+        end
+        
+        imu_best_mcs_classical(count,i) = best_mcs_classical_temp -1;
+
+        % Packet error rate with AX
+        imu_AX_per(count,i) = snr_per_mcs_5GHz_indoor_channelB(best_mcs_classical_temp,locate_snr_classical);
+
+        if imu_AX_per(count,i) > 0.001      % Simulating packet drop due to high PER
+            accelData = accelData*rand; 
+            gyroData = gyroData*rand;    
+        end
+    else
+        if imu_STASnr_rndd(count-1,i) < 20   % Re-association
+            [minValue_xRobot,imu_closestIndex_xRobot] = min(abs(estPosition(1)-AP_x));
+            [minValue_yRobot,imu_closestIndex_yRobot] = min(abs(estPosition(2)-AP_y));
+            imu_distance_closestAP(count,i) = sqrt(((estPosition(1)- AP_x(imu_closestIndex_xRobot))^2)+(estPosition(2)- AP_y(imu_closestIndex_yRobot))^2);
+            imu_Ploss(count,i) = propagation_loss (imu_distance_closestAP(count,i),Params);     % pathloss vs. distance + fixed shadow fading
+            imu_SNR(count,i) = txPower-imu_Ploss(count,i)-30-10*log10(NoisePower);
+            imu_STASnr_rndd(count,i) = ceil(str2num(sprintf('%.1f',imu_SNR(count,i))));
+            if imu_STASnr_rndd(count,i) > 45
+                imu_STASnr_rndd(count,i) = 45;
+            end
+            if imu_STASnr_rndd(count,i) < -35
+                imu_STASnr_rndd(count,i) = -35;
+            end  
+            % MCS calculation for AX
+            locate_snr_classical = find(snr_range==imu_STASnr_rndd(count,i));
+            best_mcs_classical_temp = find(snr_per_mcs_5GHz_indoor_channelB(:,locate_snr_classical) <= 0.001);
+            if isempty(best_mcs_classical_temp)
+                best_mcs_classical_temp = 1;
+            else
+                best_mcs_classical_temp = best_mcs_classical_temp(end);
+            end
+            
+            imu_best_mcs_classical(count,i) = best_mcs_classical_temp -1;
+
+            % Packet error rate with AX
+            imu_AX_per(count,i) = snr_per_mcs_5GHz_indoor_channelB(best_mcs_classical_temp,locate_snr_classical);
+
+            if imu_AX_per(count,i) > 0.001        % Simulating packet drop due to high PER
+                accelData = accelData*rand; 
+                gyroData = gyroData*rand;   
+            end
+        end
+    end
+end
+
+% Use the predict method to estimate the filter state based on the accelData and gyroData arrays.
+predict(gndFusion, accelData, gyroData);
+
+% Log the estimated orientation and position.
+[estPosition, estOrientation] = pose(gndFusion);
+
+estPosition = estPosition.'; 
+disp("estPosition")
+disp(estPosition)
+
+eul_angle = max(quat2eul(estOrientation));
+        
+prob_eul_angle = quat2eul(estOrientation);
+        
+eul_angle = abs(prob_eul_angle(1));
+
+if estPosition(1) > -18 && estPosition(1) < -4.5 && estPosition(2) > -25 && estPosition(2) < 21
+    eul_angle = -1.3708;
+else
+    if estPosition(1) > -4 && estPosition(1) < 10 && estPosition(2) > -25 && estPosition(2) < -6
+        eul_angle = 1.0370;
+    end
+end
+
+% This next step happens at the GPS sample rate. Simulate the GPS output based on the current pose.
+[lla, gpsVel] = gps(truePosition, trueVel);
+        
+if isnan(lla)
+    lla = [0,0,0];
+end
+        
+if isnan(gpsVel)
+    gpsVel = [0,0,0];
+end
+        
+% Update the filter states based on the GPS data.
+fusegps(gndFusion, lla, Rpos, gpsVel, Rvel);
+    
+    
+[imu_minValue_x,imu_closestIndex_x(count,i)] = min(abs(estPosition(1)-path_x2));
+[imu_minValue_y,imu_closestIndex_y(count,i)] = min(abs(estPosition(2)-path_y2));
+deviation_fusion_method(count,i) = sqrt(((estPosition(1)- path_x2(imu_closestIndex_x(count,i)))^2)+(estPosition(2)- path_y2(imu_closestIndex_y(count,i)))^2);
+    
+% fusion_pos = [fusion_pos; estPosition(1) estPosition(2)];
+
+% Re-compute the distance to the goal
+distanceToGoal = norm(estPosition(1:2) - robotGoal(:));
