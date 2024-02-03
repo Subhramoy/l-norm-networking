@@ -55,7 +55,7 @@ checkout branch: <multi-robot-v3>
 ```
 ```
 $ cd ~/catkin_ws/src/
-$ git clone https://github.com/subhramoy/turtlebot3_ddpg_collision_avoidance.git
+$ git clone [https://github.com/subhramoy/turtlebot3_ddpg_collision_avoidance.git](https://github.com/Subhramoy/l-norm-networking.git)
 $ cd ~/catkin_ws && catkin_make
 ```
 
